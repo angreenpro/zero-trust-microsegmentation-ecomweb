@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ZTA Shop - Lab Micro-segmentation</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen">
+
+  <!-- ===== KHU VỰC TRÊN CÙNG: ĐĂNG NHẬP ===== -->
+  <header class="bg-slate-900 text-white">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      <h1 class="text-xl font-bold">🛒 ZTA Shop</h1>
+
+      <!-- Form đăng nhập (ẩn khi đã đăng nhập) -->
+      <form id="loginForm" class="flex flex-wrap gap-2 items-center">
+        <input id="username" type="text" placeholder="Username" value="customer1"
+               class="px-3 py-1.5 rounded text-slate-900 text-sm w-32" required />
+        <input id="password" type="password" placeholder="Password" value="Customer@123"
+               class="px-3 py-1.5 rounded text-slate-900 text-sm w-32" required />
+        <button type="submit" class="bg-emerald-500 hover:bg-emerald-600 px-4 py-1.5 rounded text-sm font-semibold">
+          Đăng nhập
+        </button>
+        <span id="loginError" class="text-red-400 text-sm"></span>
+      </form>
+
+      <!-- Trạng thái đã đăng nhập -->
+      <div id="loggedInBox" class="hidden flex items-center gap-3 text-sm">
+        <span>Xin chào, <b id="loggedInUser"></b> (<span id="loggedInRole"></span>)</span>
+        <button id="logoutBtn" class="bg-red-500 hover:bg-red-600 px-3 py-1.5 rounded font-semibold">Đăng xuất</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <!-- ===== KHU VỰC GIỮA: LƯỚI SẢN PHẨM ===== -->
+    <section class="lg:col-span-2">
+      <div class="flex gap-2 mb-4">
+        <input id="searchBox" type="text" placeholder="Tìm sản phẩm..."
+               class="flex-1 px-3 py-2 rounded border border-slate-300 text-sm" />
+        <button id="searchBtn" class="bg-slate-800 text-white px-4 py-2 rounded text-sm">Tìm</button>
+        <button id="reloadBtn" class="bg-slate-200 px-4 py-2 rounded text-sm">Tất cả</button>
+      </div>
+      <div id="productGrid" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
+    </section>
+
+    <!-- ===== KHU VỰC BÊN CẠNH: GIỎ HÀNG ===== -->
+    <aside class="bg-white rounded-lg shadow p-4 h-fit sticky top-4">
+      <h2 class="font-bold text-lg mb-3">Giỏ hàng</h2>
+      <div id="cartItems" class="space-y-2 mb-3 text-sm text-slate-700">
+        <p class="text-slate-400 italic">Giỏ hàng trống</p>
+      </div>
+      <div class="border-t pt-3 flex justify-between font-semibold">
+        <span>Tổng cộng</span>
+        <span id="cartTotal">0 đ</span>
+      </div>
+      <button id="checkoutBtn"
+              class="mt-3 w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded font-semibold">
+        Thanh toán ngay
+      </button>
+      <p id="checkoutMsg" class="text-sm mt-2"></p>
+
+      <!-- ===== LỊCH SỬ ĐƠN HÀNG (GET /api/orders/my-orders) ===== -->
+      <button id="myOrdersBtn"
+              class="mt-4 w-full bg-slate-100 hover:bg-slate-200 text-slate-700 py-2 rounded text-sm font-semibold">
+        Xem đơn hàng của tôi
+      </button>
+      <div id="myOrdersBox" class="hidden mt-3 border-t pt-3 space-y-2 text-sm max-h-64 overflow-y-auto"></div>
+    </aside>
+  </main>
+
+<script>
+// ----------------------------------------------------------------
+// Toàn bộ request đi qua Nginx Gateway (cùng origin với trang này),
+// nên chỉ cần gọi đường dẫn tương đối "/api/..." - Nginx sẽ proxy
+// sang đúng microservice phía sau (PEP trong mô hình ZTA).
+// ----------------------------------------------------------------
+let cart = []; // [{id, name, price, quantity}]
+
+function money(n) {
+  return Number(n).toLocaleString("vi-VN") + " đ";
+}
+
+function getToken() {
+  return localStorage.getItem("jwt_token");
+}
+
+function updateAuthUI() {
+  const token = getToken();
+  if (token) {
+    document.getElementById("loginForm").classList.add("hidden");
+    document.getElementById("loggedInBox").classList.remove("hidden");
+    document.getElementById("loggedInUser").textContent = localStorage.getItem("username") || "";
+    document.getElementById("loggedInRole").textContent = localStorage.getItem("role") || "";
+  } else {
+    document.getElementById("loginForm").classList.remove("hidden");
+    document.getElementById("loggedInBox").classList.add("hidden");
+  }
+}
+
+// ----- ĐĂNG NHẬP -----
+document.getElementById("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const username = document.getElementById("username").value;
+  const password = document.getElementById("password").value;
+  const errBox = document.getElementById("loginError");
+  errBox.textContent = "";
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Đăng nhập thất bại");
+    }
+    const data = await res.json();
+    localStorage.setItem("jwt_token", data.access_token);
+    localStorage.setItem("username", username);
+    localStorage.setItem("role", data.role);
+    updateAuthUI();
+  } catch (err) {
+    errBox.textContent = err.message;
+  }
+});
+
+document.getElementById("logoutBtn").addEventListener("click", () => {
+  localStorage.removeItem("jwt_token");
+  localStorage.removeItem("username");
+  localStorage.removeItem("role");
+  updateAuthUI();
+});
+
+// ----- SẢN PHẨM -----
+async function loadProducts() {
+  const res = await fetch("/api/products");
+  const data = await res.json();
+  renderProducts(data.products || []);
+}
+
+async function searchProducts() {
+  const q = document.getElementById("searchBox").value;
+  const res = await fetch("/api/products/search?q=" + encodeURIComponent(q));
+  const data = await res.json();
+  renderProducts(data.products || []);
+}
+
+function renderProducts(products) {
+  const grid = document.getElementById("productGrid");
+  grid.innerHTML = "";
+  if (products.length === 0) {
+    grid.innerHTML = '<p class="text-slate-400 italic">Không tìm thấy sản phẩm nào.</p>';
+    return;
+  }
+  products.forEach((p) => {
+    const card = document.createElement("div");
+    card.className = "bg-white rounded-lg shadow p-3 flex flex-col";
+    card.innerHTML = `
+      <img src="${p.image_url || "https://placehold.co/400x300"}" alt="${p.name}"
+           class="rounded mb-2 h-32 object-cover w-full" />
+      <h3 class="font-semibold text-sm mb-1">${p.name}</h3>
+      <p class="text-emerald-700 font-bold">${money(p.price)}</p>
+      <p class="text-xs text-slate-400 mb-2">Còn ${p.stock} sản phẩm</p>
+      <button class="mt-auto bg-slate-800 text-white text-sm py-1.5 rounded hover:bg-slate-700">
+        Thêm vào giỏ
+      </button>
+    `;
+    card.querySelector("button").addEventListener("click", () => addToCart(p));
+    grid.appendChild(card);
+  });
+}
+
+// ----- GIỎ HÀNG -----
+function addToCart(product) {
+  const existing = cart.find((i) => i.id === product.id);
+  if (existing) {
+    existing.quantity += 1;
+  } else {
+    cart.push({ id: product.id, name: product.name, price: product.price, quantity: 1 });
+  }
+  renderCart();
+}
+
+function renderCart() {
+  const box = document.getElementById("cartItems");
+  if (cart.length === 0) {
+    box.innerHTML = '<p class="text-slate-400 italic">Giỏ hàng trống</p>';
+  } else {
+    box.innerHTML = cart
+      .map(
+        (i, idx) => `<div class="flex items-center justify-between gap-2">
+                  <span class="flex-1">${i.name}</span>
+                  <div class="flex items-center gap-1">
+                    <button data-idx="${idx}" class="cart-dec w-5 h-5 bg-slate-200 rounded text-xs">-</button>
+                    <span class="w-5 text-center">${i.quantity}</span>
+                    <button data-idx="${idx}" class="cart-inc w-5 h-5 bg-slate-200 rounded text-xs">+</button>
+                  </div>
+                  <span class="w-20 text-right">${money(i.price * i.quantity)}</span>
+                  <button data-idx="${idx}" class="cart-remove text-red-500 text-xs">✕</button>
+                </div>`
+      )
+      .join("");
+    box.querySelectorAll(".cart-inc").forEach((btn) =>
+      btn.addEventListener("click", () => { cart[+btn.dataset.idx].quantity += 1; renderCart(); })
+    );
+    box.querySelectorAll(".cart-dec").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const item = cart[+btn.dataset.idx];
+        item.quantity -= 1;
+        if (item.quantity <= 0) cart.splice(+btn.dataset.idx, 1);
+        renderCart();
+      })
+    );
+    box.querySelectorAll(".cart-remove").forEach((btn) =>
+      btn.addEventListener("click", () => { cart.splice(+btn.dataset.idx, 1); renderCart(); })
+    );
+  }
+  const total = cart.reduce((sum, i) => sum + i.price * i.quantity, 0);
+  document.getElementById("cartTotal").textContent = money(total);
+}
+
+// ----- THANH TOÁN -----
+document.getElementById("checkoutBtn").addEventListener("click", async () => {
+  const msg = document.getElementById("checkoutMsg");
+  msg.textContent = "";
+  const token = getToken();
+  if (!token) {
+    msg.className = "text-sm mt-2 text-red-600";
+    msg.textContent = "Bạn cần đăng nhập trước khi đặt hàng.";
+    return;
+  }
+  if (cart.length === 0) {
+    msg.className = "text-sm mt-2 text-red-600";
+    msg.textContent = "Giỏ hàng đang trống.";
+    return;
+  }
+  try {
+    const res = await fetch("/api/orders", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + token,
+      },
+      body: JSON.stringify({
+        items: cart.map((i) => ({ product_id: i.id, quantity: i.quantity })),
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Đặt hàng thất bại");
+    }
+    const data = await res.json();
+    msg.className = "text-sm mt-2 text-emerald-600";
+    msg.textContent = `Đặt hàng thành công! Mã đơn #${data.order_id}, tổng ${money(data.total_price)}.`;
+    cart = [];
+    renderCart();
+    loadProducts(); // cập nhật lại tồn kho hiển thị
+  } catch (err) {
+    msg.className = "text-sm mt-2 text-red-600";
+    msg.textContent = err.message;
+  }
+});
+
+// ----- LỊCH SỬ ĐƠN HÀNG -----
+document.getElementById("myOrdersBtn").addEventListener("click", async () => {
+  const box = document.getElementById("myOrdersBox");
+  const token = getToken();
+  if (!token) {
+    alert("Bạn cần đăng nhập trước.");
+    return;
+  }
+  if (!box.classList.contains("hidden")) {
+    box.classList.add("hidden"); // bấm lần nữa để đóng lại
+    return;
+  }
+  box.classList.remove("hidden");
+  box.innerHTML = '<p class="text-slate-400 italic">Đang tải...</p>';
+  try {
+    const res = await fetch("/api/orders/my-orders", {
+      headers: { Authorization: "Bearer " + token },
+    });
+    if (!res.ok) throw new Error("Không lấy được lịch sử đơn hàng");
+    const data = await res.json();
+    if (!data.orders || data.orders.length === 0) {
+      box.innerHTML = '<p class="text-slate-400 italic">Chưa có đơn hàng nào.</p>';
+      return;
+    }
+    box.innerHTML = data.orders
+      .map(
+        (o) => `<div class="flex justify-between border-b pb-1">
+                  <span>#${o.id} - ${o.status}</span>
+                  <span>${money(o.total_price)}</span>
+                </div>`
+      )
+      .join("");
+  } catch (err) {
+    box.innerHTML = `<p class="text-red-600">${err.message}</p>`;
+  }
+});
+
+document.getElementById("searchBtn").addEventListener("click", searchProducts);
+document.getElementById("reloadBtn").addEventListener("click", loadProducts);
+document.getElementById("searchBox").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") searchProducts();
+});
+
+// Khởi tạo
+updateAuthUI();
+loadProducts();
+</script>
+</body>
+</html>
