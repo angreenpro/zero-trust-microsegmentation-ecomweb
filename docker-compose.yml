@@ -1,0 +1,77 @@
+services:
+  mysql-db:
+    image: mysql:8.0
+    container_name: mysql-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: Root#Lab2026
+      MYSQL_DATABASE: ecommerce
+    volumes:
+      - ./mysql-db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pRoot#Lab2026"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
+    restart: unless-stopped
+    environment:
+      DB_HOST: mysql-db
+      DB_PORT: "3306"
+      DB_USER: auth_user
+      DB_PASSWORD: Auth#Lab2026
+      DB_NAME: ecommerce
+      JWT_SECRET: zta-lab-super-secret-change-me
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+
+  catalog-service:
+    build: ./catalog-service
+    container_name: catalog-service
+    restart: unless-stopped
+    environment:
+      DB_HOST: mysql-db
+      DB_PORT: "3306"
+      DB_USER: catalog_user
+      DB_PASSWORD: Catalog#Lab2026
+      DB_NAME: ecommerce
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+
+  order-service:
+    build: ./order-service
+    container_name: order-service
+    restart: unless-stopped
+    environment:
+      DB_HOST: mysql-db
+      DB_PORT: "3306"
+      DB_USER: order_user
+      DB_PASSWORD: Order#Lab2026
+      DB_NAME: ecommerce
+      JWT_SECRET: zta-lab-super-secret-change-me
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+
+  nginx-gateway:
+    image: nginx:1.27-alpine
+    container_name: nginx-gateway
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx-gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./web:/usr/share/nginx/html:ro
+    depends_on:
+      - auth-service
+      - catalog-service
+      - order-service
+
+volumes:
+  mysql_data:
