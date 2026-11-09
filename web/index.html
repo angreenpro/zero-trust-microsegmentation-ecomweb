@@ -148,6 +148,27 @@ async function searchProducts() {
   renderProducts(data.products || []);
 }
 
+// Ánh xạ trực tiếp từng sản phẩm tới file ảnh thật trong thư mục web/images/
+const PRODUCT_IMAGES = {
+  1: "/images/laptop.jpg",
+  2: "/images/dienthoai.jpg",
+  3: "/images/headphone.jpg",
+  4: "/images/keyboarf.jpg",
+  5: "/images/chuot.jpg",
+  6: "/images/manhinh.jpg",
+  7: "/images/ssd.jpg",
+  8: "/images/webcam.jpg",
+  9: "/images/loa.jpg",
+  10: "/images/router.jpg",
+};
+
+function getProductImage(p) {
+  if (p.image_url && p.image_url.startsWith("/images/")) {
+    return p.image_url;
+  }
+  return PRODUCT_IMAGES[p.id] || p.image_url || "/images/laptop.jpg";
+}
+
 function renderProducts(products) {
   const grid = document.getElementById("productGrid");
   grid.innerHTML = "";
@@ -158,9 +179,10 @@ function renderProducts(products) {
   products.forEach((p) => {
     const card = document.createElement("div");
     card.className = "bg-white rounded-lg shadow p-3 flex flex-col";
+    const imgSrc = getProductImage(p);
     card.innerHTML = `
-      <img src="${p.image_url || "https://placehold.co/400x300"}" alt="${p.name}"
-           class="rounded mb-2 h-32 object-cover w-full" />
+      <img src="${imgSrc}" alt="${p.name}"
+           class="rounded mb-2 h-40 object-contain bg-slate-50 w-full" />
       <h3 class="font-semibold text-sm mb-1">${p.name}</h3>
       <p class="text-emerald-700 font-bold">${money(p.price)}</p>
       <p class="text-xs text-slate-400 mb-2">Còn ${p.stock} sản phẩm</p>
