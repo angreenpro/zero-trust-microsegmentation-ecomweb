@@ -1,6 +1,6 @@
 # Zero Trust Micro-segmentation Demo
 
-Đồ án nghiên cứu **Zero Trust Architecture (ZTA)** và **Micro-segmentation** trên ứng dụng Web bán hàng kiến trúc **Microservices**. Hệ thống áp dụng **PEP Gateway**, **Least Privilege ở tầng Database**, xác thực **JWT**, kết hợp cô lập 7 phân vùng mạng điểm–tới–điểm (`internal: true`) để chặn tấn công **Lateral Movement** và tự động cô lập vùng bị xâm nhập.
+Đề tài nghiên cứu **Zero Trust Architecture (ZTA)** & **Micro-segmentation** trên ứng dụng Web bán hàng kiến trúc **Microservices**. Hệ thống áp dụng **PEP Gateway**, **Least Privilege ở tầng Database**, xác thực **JWT**, kết hợp cô lập 7 phân vùng mạng điểm–tới–điểm (`internal: true`) để chặn tấn công **Lateral Movement** và tự động cô lập vùng bị xâm nhập.
 
 ---
 
@@ -30,7 +30,7 @@ docker ps
 ```
 
 4. Mở trình duyệt truy cập giao diện Web bán hàng tại:
-   👉 **[http://localhost:8086](http://localhost:8086)**
+   **[http://localhost:8086](http://localhost:8086)**
    - **Tài khoản khách hàng**: `customer1` / `Customer@123`
    - **Tài khoản quản trị**: `admin` / `Admin@123`
 
@@ -85,7 +85,7 @@ bash tests/run_tests.sh
 ### Bước 3: Xem Báo cáo Kết quả Kiểm thử
 
 Sau mỗi lần chạy kiểm thử, ngoài kết quả `[PASS]` / `[FAIL]` hiển thị trực tiếp trên màn hình Terminal, hệ thống tự động xuất một file báo cáo bảng Markdown chi tiết tại:
-- 📂 `tests/results/report_<YYYYMMDD_HHMMSS>.md`
+- `tests/results/report_<YYYYMMDD_HHMMSS>.md`
 
 ---
 
