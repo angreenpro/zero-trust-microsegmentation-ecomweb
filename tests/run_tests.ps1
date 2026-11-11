@@ -1,9 +1,9 @@
 # =====================================================================
-# tests/run_tests.ps1 — Script tự động chuẩn bị Docker & chạy kiểm thử ZTA
-# Cách dùng trên Windows PowerShell:
-#   .\tests\run_tests.ps1              # Chạy toàn bộ KB0 -> KB4
-#   .\tests\run_tests.ps1 kb1          # Chỉ chạy riêng KB1 (hoặc kb2, kb3, kb4)
-#   .\tests\run_tests.ps1 --skip-kb4   # Chạy KB0 -> KB3 (không ngắt mạng catalog)
+# tests/run_tests.ps1 - Automated Zero Trust & Micro-segmentation Test Runner
+# Usage in Windows PowerShell:
+#   .\tests\run_tests.ps1              # Run all scenarios (KB0 -> KB4)
+#   .\tests\run_tests.ps1 kb1          # Run only KB1 (or kb2, kb3, kb4)
+#   .\tests\run_tests.ps1 --skip-kb4   # Run KB0 -> KB3 (skip catalog isolation)
 # =====================================================================
 
 param(
@@ -12,30 +12,35 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
+chcp 65001 > $null
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding           = [System.Text.Encoding]::UTF8
+$env:PYTHONIOENCODING     = "utf-8"
+$env:PYTHONUTF8           = "1"
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot
 
 Write-Host "==============================================================" -ForegroundColor Cyan
-Write-Host "   ZERO TRUST & MICRO-SEGMENTATION — AUTOMATED TEST RUNNER    " -ForegroundColor Cyan
+Write-Host "   ZERO TRUST & MICRO-SEGMENTATION - AUTOMATED TEST RUNNER    " -ForegroundColor Cyan
 Write-Host "==============================================================" -ForegroundColor Cyan
 
-# 1. Kiểm tra Docker Engine đã chạy chưa
-Write-Host "`n[1/3] Kiểm tra trạng thái Docker Desktop..." -ForegroundColor Yellow
+# 1. Check Docker Engine status
+Write-Host "`n[1/3] Checking Docker Desktop status..." -ForegroundColor Yellow
 docker info --format "{{.ServerVersion}}" > $null 2>&1
 if ($LASTEXITCODE -ne 0) {
-    Write-Host " Docker Desktop chưa chạy! Vui lòng bật Docker Desktop đợi Engine running rồi thử lại." -ForegroundColor Red
+    Write-Host "  [FAIL] Docker Desktop is not running! Please start Docker Desktop first." -ForegroundColor Red
     exit 1
 }
-Write-Host " Docker Engine đang hoạt động." -ForegroundColor Green
+Write-Host "  [OK] Docker Engine is running." -ForegroundColor Green
 
-# 2. Kiểm tra cụm 5 containers đã chạy chưa
-Write-Host "`n[2/3] Kiểm tra cụm 5 containers (mysql-db, auth, catalog, order, nginx)..." -ForegroundColor Yellow
+# 2. Check all 5 containers
+Write-Host "`n[2/3] Checking 5 containers (mysql-db, auth, catalog, order, nginx)..." -ForegroundColor Yellow
 $RunningCount = (docker ps --filter "name=mysql-db" --filter "name=auth-service" --filter "name=catalog-service" --filter "name=order-service" --filter "name=nginx-gateway" -q | Measure-Object).Count
 
 if ($RunningCount -lt 5) {
-    Write-Host " Chưa đủ 5 containers đang chạy (hiện có $RunningCount/5). Đang khởi động docker-compose..." -ForegroundColor Yellow
+    Write-Host "  [WARN] Only $RunningCount/5 containers running. Starting docker-compose..." -ForegroundColor Yellow
     if (Get-Command docker-compose -ErrorAction SilentlyContinue) {
         docker-compose up -d --build
     } else {
@@ -43,27 +48,25 @@ if ($RunningCount -lt 5) {
     }
 }
 
-# Đợi mysql-db đạt trạng thái healthy
-Write-Host " Đang kiểm tra trạng thái sẵn sàng của mysql-db..." -ForegroundColor Gray
+Write-Host "  [WAIT] Waiting for mysql-db healthcheck..." -ForegroundColor Gray
 for ($i = 0; $i -lt 20; $i++) {
     $Health = docker inspect --format "{{.State.Health.Status}}" mysql-db 2>$null
     if ($Health -eq "healthy") {
-        Write-Host " Cả 5 containers và mysql-db (healthy) đã sẵn sàng!" -ForegroundColor Green
+        Write-Host "  [OK] All 5 containers and mysql-db (healthy) are ready!" -ForegroundColor Green
         break
     }
     Start-Sleep -Seconds 2
 }
 
-# 3. Chạy kịch bản kiểm thử Python
-Write-Host "`n[3/3] Thực thi bộ kịch bản kiểm thử (tests/run_scenarios.py)..." -ForegroundColor Yellow
+# 3. Run Python scenario test suite
+Write-Host "`n[3/3] Running test scenarios (tests/run_scenarios.py)..." -ForegroundColor Yellow
 python "$PSScriptRoot\run_scenarios.py" @TestArgs
 $ExitCode = $LASTEXITCODE
 
-# Hiển thị file báo cáo mới nhất
+# Print latest Markdown report path
 $LatestReport = Get-ChildItem -Path "$PSScriptRoot\results\report_*.md" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ($LatestReport) {
-    Write-Host "`n📄 File báo cáo Markdown vừa xuất: $($LatestReport.FullName)" -ForegroundColor Cyan
+    Write-Host "`n[REPORT] Markdown report saved to: $($LatestReport.FullName)" -ForegroundColor Cyan
 }
 
 exit $ExitCode
-

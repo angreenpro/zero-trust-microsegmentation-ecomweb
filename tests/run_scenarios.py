@@ -22,7 +22,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-sys.stdout.reconfigure(encoding="utf-8")
+if os.name == "nt":
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleCP(65001)
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+    except Exception:
+        pass
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 BASE = os.getenv("BASE_URL", "http://localhost:8086")
 RESULTS = []  # (kịch bản, mô tả, kỳ vọng, thực tế, PASS/FAIL)
@@ -61,8 +70,7 @@ def in_container(container, script, *args):
 def record(kb, desc, expected, actual, ok):
     status = "PASS" if ok else "FAIL"
     RESULTS.append((kb, desc, expected, actual, status))
-    icon = "✅" if ok else "❌"
-    print(f"  {icon} [{status}] {desc}\n       kỳ vọng : {expected}\n       thực tế : {actual}")
+    print(f"  [{status}] {desc}\n         kỳ vọng : {expected}\n         thực tế : {actual}")
 
 
 def short(text, n=160):
@@ -171,10 +179,10 @@ def kb1():
     record("KB1", "SQLi tautology q=\"' OR '1'='1\"", "200, trả về TẤT CẢ sản phẩm (lỗ hổng tồn tại)",
            f"{st}, {len(rows or [])} kết quả", st == 200 and len(rows or []) >= 10)
 
-    st, _, rows = search("' UNION SELECT 1,current_user(),0,0,@@version-- ")
-    leaked = rows[0] if rows else None
+    st, _, rows = search("ZZZZ_NONE' UNION SELECT 1,current_user(),0,0,@@version-- ")
+    leaked = rows[-1] if rows else None
     record("KB1", "SQLi UNION đọc danh tính DB", "Lộ user DB = catalog_user (chứng minh khai thác được)",
-           f"{st}, {short(leaked)}", st == 200 and leaked and "catalog_user" in str(leaked))
+           f"{st}, {short(leaked)}", st == 200 and leaked and "catalog_user" in str(rows))
 
     st, _, rows = search("' UNION SELECT 1,table_name,0,0,table_schema FROM information_schema.tables WHERE table_schema='ecommerce'-- ")
     tables = sorted({r.get("name") for r in rows or []} - {None})
@@ -307,11 +315,11 @@ def write_report():
     passed = sum(1 for r in RESULTS if r[4] == "PASS")
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"# Kết quả kiểm thử Zero Trust - {stamp}\n\n")
-        f.write(f"**Tổng: {passed}/{len(RESULTS)} PASS** — Base URL: `{BASE}`\n\n")
+        f.write(f"**Tổng: {passed}/{len(RESULTS)} PASS** - Base URL: `{BASE}`\n\n")
         f.write("| KB | Phép thử | Kỳ vọng | Thực tế | Kết quả |\n|---|---|---|---|---|\n")
         for kb, desc, exp, act, st in RESULTS:
             act = str(act).replace("|", "\\|")
-            f.write(f"| {kb} | {desc} | {exp} | `{act}` | {'✅' if st == 'PASS' else '❌'} {st} |\n")
+            f.write(f"| {kb} | {desc} | {exp} | `{act}` | **{st}** |\n")
     return path, passed
 
 
