@@ -1,0 +1,11 @@
+# =====================================================================
+# Lưu ý: tests/run_scenarios.py sử dụng 100% thư viện chuẩn (stdlib) của
+# Python 3.8+ nên có thể chạy trực tiếp ngay mà không bắt buộc cài đặt.
+# Các gói dưới đây phục vụ kiểm thử mở rộng (pytest, HTTP client, load test).
+# =====================================================================
+
+requests==2.32.3
+pytest==8.3.3
+pyjwt==2.9.0
+colorama==0.4.6
+
