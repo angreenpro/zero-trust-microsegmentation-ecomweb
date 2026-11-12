@@ -1,8 +1,10 @@
 # =====================================================================
-# docker-compose.yml — Kiến trúc Zero Trust & Micro-segmentation
+# docker-compose.yml — Kiến trúc Zero Trust & Micro-segmentation (6 Zones / 9 Subnets)
 # - Phân tách mạng vi mô (Point-to-Point Micro-segments) giữa từng Zone.
-# - Chặn hoàn toàn luồng Đông - Tây (East-West) giữa catalog / order / auth.
-# - Toàn bộ vùng App và DB đặt internal: true (chặn Reverse Shell ra Internet).
+# - Chặn hoàn toàn luồng Đông - Tây trái phép (catalog / auth <-> order / payment).
+# - Chỉ cho phép duy nhất luồng Đông - Tây hợp lệ: order-service -> payment-service
+#   qua mạng cô lập order_payment_net (kèm Xác thực Kép User JWT + X-Service-Key).
+# - Toàn bộ vùng App, Payment và DB đặt internal: true (chặn Reverse Shell ra Internet).
 # =====================================================================
 
 services:
@@ -24,8 +26,10 @@ services:
         ipv4_address: 172.28.12.20
       db_order_net:
         ipv4_address: 172.28.13.20
+      db_payment_net:
+        ipv4_address: 172.28.14.20
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pRoot#Lab2026"]
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-pRoot#Lab2026" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -69,6 +73,27 @@ services:
       mysql-db:
         condition: service_healthy
 
+  payment-service:
+    build: ./payment-service
+    container_name: payment-service
+    restart: unless-stopped
+    environment:
+      DB_HOST: mysql-db
+      DB_PORT: "3306"
+      DB_USER: payment_user
+      DB_PASSWORD: Payment#Lab2026
+      DB_NAME: ecommerce
+      JWT_SECRET: zta-lab-super-secret-change-me
+      INTERNAL_SERVICE_KEY: zta-internal-order-to-payment-key-2026
+    networks:
+      order_payment_net:
+        ipv4_address: 172.28.4.20
+      db_payment_net:
+        ipv4_address: 172.28.14.10
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+
   order-service:
     build: ./order-service
     container_name: order-service
@@ -80,14 +105,20 @@ services:
       DB_PASSWORD: Order#Lab2026
       DB_NAME: ecommerce
       JWT_SECRET: zta-lab-super-secret-change-me
+      PAYMENT_SERVICE_URL: http://payment-service:8004
+      INTERNAL_SERVICE_KEY: zta-internal-order-to-payment-key-2026
     networks:
       pep_order_net:
         ipv4_address: 172.28.3.10
+      order_payment_net:
+        ipv4_address: 172.28.4.10
       db_order_net:
         ipv4_address: 172.28.13.10
     depends_on:
       mysql-db:
         condition: service_healthy
+      payment-service:
+        condition: service_started
 
   nginx-gateway:
     image: nginx:1.27-alpine
@@ -113,7 +144,7 @@ services:
       - order-service
 
 networks:
-  # Mạng biên duy nhất được phép giao tiếp với Host / Internet qua cổng 8086
+  # 1. Mạng biên duy nhất được phép giao tiếp với Host / Internet qua cổng 8086
   edge_public_net:
     driver: bridge
     ipam:
@@ -142,7 +173,15 @@ networks:
       config:
         - subnet: 172.28.3.0/24
 
-  # --- CÁC PHÂN ĐOẠN MẠNG APP <-> DB (Cô lập nội bộ: internal: true) ---
+  # --- PHÂN ĐOẠN MẠNG ĐÔNG - TÂY DUY NHẤT: ORDER <-> PAYMENT (PCI-DSS Zone) ---
+  order_payment_net:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.4.0/24
+
+  # --- CÁC PHÂN ĐOẠN MẠNG APP/PAYMENT <-> DB (Cô lập nội bộ: internal: true) ---
   db_auth_net:
     driver: bridge
     internal: true
@@ -164,5 +203,12 @@ networks:
       config:
         - subnet: 172.28.13.0/24
 
+  db_payment_net:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.14.0/24
+ 
 volumes:
   mysql_data:
