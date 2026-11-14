@@ -13,7 +13,7 @@
     <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-center gap-3">
         <h1 class="text-xl font-bold">🛒 ZTA Shop</h1>
-        <span class="text-xs bg-emerald-700/80 px-2.5 py-0.5 rounded-full">6 Zones · Micro-segmented</span>
+        <span class="text-xs bg-emerald-700/80 px-2.5 py-0.5 rounded-full">6 Zones · Multi-DB Isolated</span>
       </div>
 
       <!-- Form đăng nhập (ẩn khi đã đăng nhập) -->
@@ -49,36 +49,22 @@
       <div id="productGrid" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
     </section>
 
-    <!-- ===== KHU VỰC BÊN CẠNH: GIỎ HÀNG + COUPON + PAYMENT ===== -->
+    <!-- ===== KHU VỰC BÊN CẠNH: GIỎ HÀNG + PAYMENT ===== -->
     <aside class="bg-white rounded-lg shadow p-4 h-fit sticky top-4">
       <h2 class="font-bold text-lg mb-3">Giỏ hàng & Thanh toán</h2>
       <div id="cartItems" class="space-y-2 mb-3 text-sm text-slate-700">
         <p class="text-slate-400 italic">Giỏ hàng trống</p>
       </div>
 
-      <!-- ===== KHU VỰC MÃ GIẢM GIÁ (COUPON) ===== -->
-      <div class="border-t pt-3 mt-2">
-        <label class="block text-xs font-semibold text-slate-600 mb-1">🎟️ Mã giảm giá (Coupon)</label>
-        <div class="flex gap-1.5">
-          <input id="couponInput" type="text" placeholder="VD: ZTA10, ZTA500K, VIP20"
-                 class="flex-1 px-2.5 py-1.5 rounded border border-slate-300 text-xs uppercase" />
-          <button id="applyCouponBtn" type="button"
-                  class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-xs font-semibold">
-            Áp dụng
-          </button>
-          <button id="clearCouponBtn" type="button"
-                  class="hidden bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1.5 rounded text-xs">
-            Bỏ
-          </button>
-        </div>
-        <!-- Gợi ý nhanh các coupon đang hoạt động -->
-        <div id="couponSuggestions" class="flex flex-wrap gap-1 mt-1.5"></div>
-        <p id="couponMsg" class="text-xs mt-1"></p>
-      </div>
-
-      <!-- ===== KHU VỰC PHƯƠNG THỨC THANH TOÁN (PAYMENT-SERVICE) ===== -->
+      <!-- ===== KHU VỰC VÍ & PHƯƠNG THỨC THANH TOÁN (PAYMENT-SERVICE / payment_db) ===== -->
       <div class="border-t pt-3 mt-3">
-        <label class="block text-xs font-semibold text-slate-600 mb-1">💳 Phương thức thanh toán (Payment Zone)</label>
+        <label class="block text-xs font-semibold text-slate-600 mb-1.5">💳 Ví & Thẻ của tôi (`payment_db`)</label>
+
+        <!-- Thông tin Ví (tải từ bảng payment_db.user_wallets qua payment-service) -->
+        <div id="walletBox" class="bg-slate-800 text-white rounded-md p-2.5 mb-2 text-xs space-y-1">
+          <p class="text-slate-300 italic">Đăng nhập để xem số dư Ví & Thẻ liên kết</p>
+        </div>
+
         <select id="paymentMethod" class="w-full px-2.5 py-1.5 rounded border border-slate-300 text-xs mb-2">
           <option value="credit_card">Thẻ tín dụng / Quốc tế (PCI-DSS Masked)</option>
           <option value="vietqr">Chuyển khoản nhanh VietQR Napas</option>
@@ -93,15 +79,7 @@
 
       <!-- ===== TỔNG TIỀN CHI TIẾT ===== -->
       <div class="border-t pt-3 mt-3 space-y-1 text-sm">
-        <div class="flex justify-between text-slate-600">
-          <span>Tạm tính</span>
-          <span id="cartSubtotal">0 đ</span>
-        </div>
-        <div class="flex justify-between text-emerald-600">
-          <span>Giảm giá <span id="appliedCouponBadge" class="text-xs font-mono"></span></span>
-          <span id="cartDiscount">-0 đ</span>
-        </div>
-        <div class="flex justify-between font-bold text-base pt-1 border-t">
+        <div class="flex justify-between font-bold text-base pt-1">
           <span>Tổng thanh toán</span>
           <span id="cartTotal" class="text-emerald-700">0 đ</span>
         </div>
@@ -113,7 +91,7 @@
       </button>
       <div id="checkoutMsg" class="text-sm mt-2"></div>
 
-      <!-- ===== LỊCH SỬ ĐƠN HÀNG (GET /api/orders/my-orders) ===== -->
+      <!-- ===== LỊCH SỬ ĐƠN HÀNG (GET /api/orders/my-orders từ order_db) ===== -->
       <button id="myOrdersBtn"
               class="mt-4 w-full bg-slate-100 hover:bg-slate-200 text-slate-700 py-2 rounded text-sm font-semibold">
         Xem đơn hàng của tôi
@@ -125,12 +103,11 @@
 <script>
 // ----------------------------------------------------------------
 // Toàn bộ request từ trình duyệt đi qua Nginx Gateway (/api/...).
-// Riêng payment-service nằm ở vùng sâu (Deep Internal Zone) nên
-// trình duyệt KHÔNG gọi thẳng được mà order-service sẽ gọi Đông-Tây
-// sang payment-service qua mạng cô lập order_payment_net.
+// - order-service kết nối tới database `order_db` (orders, order_items).
+// - payment-service nằm ở vùng sâu (Deep Internal Zone) và kết nối tới
+//   database `payment_db` (user_wallets, payments).
 // ----------------------------------------------------------------
 let cart = []; // [{id, name, price, quantity}]
-let appliedCoupon = null; // {code, discount_amount, description, discount_type, discount_value}
 
 function money(n) {
   return Number(n || 0).toLocaleString("vi-VN") + " đ";
@@ -140,7 +117,7 @@ function getToken() {
   return localStorage.getItem("jwt_token");
 }
 
-function getSubtotal() {
+function getTotal() {
   return cart.reduce((sum, i) => sum + i.price * i.quantity, 0);
 }
 
@@ -151,9 +128,40 @@ function updateAuthUI() {
     document.getElementById("loggedInBox").classList.remove("hidden");
     document.getElementById("loggedInUser").textContent = localStorage.getItem("username") || "";
     document.getElementById("loggedInRole").textContent = localStorage.getItem("role") || "";
+    loadWallet();
   } else {
     document.getElementById("loginForm").classList.remove("hidden");
     document.getElementById("loggedInBox").classList.add("hidden");
+    document.getElementById("walletBox").innerHTML =
+      '<p class="text-slate-300 italic">Đăng nhập để xem số dư Ví & Thẻ liên kết</p>';
+  }
+}
+
+async function loadWallet() {
+  const token = getToken();
+  const box = document.getElementById("walletBox");
+  if (!token) return;
+  try {
+    const res = await fetch("/api/orders/wallet", {
+      headers: { Authorization: "Bearer " + token },
+    });
+    if (!res.ok) throw new Error("Không tải được ví");
+    const data = await res.json();
+    const w = data.wallet;
+    if (!w) return;
+    box.innerHTML = `
+      <div class="flex justify-between items-center">
+        <span class="font-semibold text-emerald-400">${w.bank_name}</span>
+        <span class="px-1.5 py-0.5 rounded bg-emerald-900/80 text-emerald-300 text-[10px] uppercase">${w.status}</span>
+      </div>
+      <div class="font-mono text-[11px] text-slate-300">${w.card_holder} · ${w.card_masked}</div>
+      <div class="flex justify-between items-baseline pt-1 border-t border-slate-700">
+        <span class="text-slate-400">Số dư khả dụng:</span>
+        <span class="font-bold text-sm text-emerald-400">${money(w.balance)}</span>
+      </div>
+    `;
+  } catch (_) {
+    box.innerHTML = '<p class="text-red-300">Không kết nối được Ví Payment Zone</p>';
   }
 }
 
@@ -262,103 +270,8 @@ function renderProducts(products) {
   });
 }
 
-// ----- MÃ GIẢM GIÁ (COUPON) -----
-async function loadCoupons() {
-  const box = document.getElementById("couponSuggestions");
-  try {
-    const res = await fetch("/api/orders/coupons");
-    if (!res.ok) return;
-    const data = await res.json();
-    const coupons = data.coupons || [];
-    box.innerHTML = coupons
-      .map(
-        (c) => `<button type="button" data-code="${c.code}" title="${c.description}"
-                  class="coupon-tag text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded font-mono">
-                  ${c.code}
-                </button>`
-      )
-      .join("");
-    box.querySelectorAll(".coupon-tag").forEach((btn) =>
-      btn.addEventListener("click", () => {
-        document.getElementById("couponInput").value = btn.dataset.code;
-        validateAndApplyCoupon(btn.dataset.code);
-      })
-    );
-  } catch (_) {}
-}
-
-async function validateAndApplyCoupon(rawCode, silent = false) {
-  const code = (rawCode || document.getElementById("couponInput").value || "").trim().toUpperCase();
-  const msg = document.getElementById("couponMsg");
-  const clearBtn = document.getElementById("clearCouponBtn");
-  const subtotal = getSubtotal();
-
-  if (!code) {
-    appliedCoupon = null;
-    msg.textContent = "";
-    clearBtn.classList.add("hidden");
-    updateTotalsUI();
-    return;
-  }
-
-  if (subtotal <= 0) {
-    appliedCoupon = null;
-    clearBtn.classList.add("hidden");
-    if (!silent) {
-      msg.className = "text-xs mt-1 text-amber-600";
-      msg.textContent = "Hãy thêm sản phẩm vào giỏ trước khi áp mã giảm giá.";
-    }
-    updateTotalsUI();
-    return;
-  }
-
-  try {
-    const res = await fetch(
-      `/api/orders/coupons/validate?code=${encodeURIComponent(code)}&subtotal=${subtotal}`
-    );
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      appliedCoupon = null;
-      clearBtn.classList.add("hidden");
-      msg.className = "text-xs mt-1 text-red-600";
-      msg.textContent = data.detail || "Mã giảm giá không hợp lệ";
-      updateTotalsUI();
-      return;
-    }
-    appliedCoupon = data;
-    clearBtn.classList.remove("hidden");
-    msg.className = "text-xs mt-1 text-emerald-600";
-    msg.textContent = `✓ Đã áp mã ${data.code}: giảm ${money(data.discount_amount)} (${data.description})`;
-    updateTotalsUI();
-  } catch (err) {
-    appliedCoupon = null;
-    msg.className = "text-xs mt-1 text-red-600";
-    msg.textContent = "Không kiểm tra được mã giảm giá.";
-    updateTotalsUI();
-  }
-}
-
-document.getElementById("applyCouponBtn").addEventListener("click", () => {
-  validateAndApplyCoupon();
-});
-
-document.getElementById("clearCouponBtn").addEventListener("click", () => {
-  document.getElementById("couponInput").value = "";
-  appliedCoupon = null;
-  document.getElementById("couponMsg").textContent = "";
-  document.getElementById("clearCouponBtn").classList.add("hidden");
-  updateTotalsUI();
-});
-
 function updateTotalsUI() {
-  const subtotal = getSubtotal();
-  const discount = appliedCoupon ? Number(appliedCoupon.discount_amount || 0) : 0;
-  const finalTotal = Math.max(0, subtotal - discount);
-
-  document.getElementById("cartSubtotal").textContent = money(subtotal);
-  document.getElementById("cartDiscount").textContent = "-" + money(discount);
-  document.getElementById("appliedCouponBadge").textContent = appliedCoupon ? `(${appliedCoupon.code})` : "";
-  document.getElementById("cartTotal").textContent = money(finalTotal);
+  document.getElementById("cartTotal").textContent = money(getTotal());
 }
 
 // ----- GIỎ HÀNG -----
@@ -406,20 +319,10 @@ function renderCart() {
       btn.addEventListener("click", () => { cart.splice(+btn.dataset.idx, 1); renderCart(); })
     );
   }
-
-  if (appliedCoupon && cart.length > 0) {
-    validateAndApplyCoupon(appliedCoupon.code, true);
-  } else {
-    if (cart.length === 0) {
-      appliedCoupon = null;
-      document.getElementById("couponMsg").textContent = "";
-      document.getElementById("clearCouponBtn").classList.add("hidden");
-    }
-    updateTotalsUI();
-  }
+  updateTotalsUI();
 }
 
-// ----- THANH TOÁN (ORDER-SERVICE -> PAYMENT-SERVICE) -----
+// ----- THANH TOÁN (ORDER-SERVICE [order_db] -> PAYMENT-SERVICE [payment_db]) -----
 document.getElementById("checkoutBtn").addEventListener("click", async () => {
   const msg = document.getElementById("checkoutMsg");
   msg.innerHTML = "";
@@ -437,7 +340,6 @@ document.getElementById("checkoutBtn").addEventListener("click", async () => {
 
   const paymentMethod = document.getElementById("paymentMethod").value;
   const cardNumber = document.getElementById("cardNumber").value;
-  const couponCode = appliedCoupon ? appliedCoupon.code : (document.getElementById("couponInput").value.trim() || null);
 
   try {
     const res = await fetch("/api/orders", {
@@ -448,7 +350,6 @@ document.getElementById("checkoutBtn").addEventListener("click", async () => {
       },
       body: JSON.stringify({
         items: cart.map((i) => ({ product_id: i.id, quantity: i.quantity })),
-        coupon_code: couponCode,
         payment_method: paymentMethod,
         card_number: cardNumber,
       }),
@@ -462,21 +363,16 @@ document.getElementById("checkoutBtn").addEventListener("click", async () => {
     msg.className = "text-xs mt-2 bg-emerald-50 border border-emerald-200 text-emerald-800 p-2.5 rounded space-y-1";
     msg.innerHTML = `
       <div class="font-bold text-sm">✅ Thanh toán thành công đơn #${data.order_id}</div>
-      <div>• Tạm tính: <b>${money(data.subtotal)}</b></div>
-      ${data.coupon_code ? `<div>• Mã giảm giá (<b>${data.coupon_code}</b>): <b>-${money(data.discount_amount)}</b></div>` : ""}
       <div>• Tổng thanh toán: <b class="text-emerald-700">${money(data.total_price)}</b></div>
       <div class="border-t border-emerald-200 pt-1 mt-1 text-[11px] font-mono text-slate-600">
-        [Payment Zone] Mã GD: <b>${pay.transaction_ref || "N/A"}</b> | PTTT: <b>${pay.card_masked || pay.payment_method || ""}</b>
+        [Payment Zone · payment_db] Mã GD: <b>${pay.transaction_ref || "N/A"}</b> | PTTT: <b>${pay.card_masked || pay.payment_method || ""}</b>
+        ${pay.balance_after !== undefined ? `<br/>Số dư Ví còn lại: <b class="text-emerald-700">${money(pay.balance_after)}</b>` : ""}
       </div>
     `;
     cart = [];
-    appliedCoupon = null;
-    document.getElementById("couponInput").value = "";
-    document.getElementById("couponMsg").textContent = "";
-    document.getElementById("clearCouponBtn").classList.add("hidden");
     renderCart();
     loadProducts();
-    loadCoupons();
+    loadWallet();
   } catch (err) {
     msg.className = "text-sm mt-2 text-red-600";
     msg.textContent = err.message;
@@ -514,9 +410,8 @@ document.getElementById("myOrdersBtn").addEventListener("click", async () => {
                     <span class="font-semibold">#${o.id} <span class="text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">${o.status}</span></span>
                     <span class="font-bold text-slate-800">${money(o.total_price)}</span>
                   </div>
-                  ${o.coupon_code ? `<div class="text-xs text-indigo-600">🎟️ Coupon: <b>${o.coupon_code}</b> (-${money(o.discount_amount)})</div>` : ""}
                   <button data-order-id="${o.id}" class="view-receipt-btn text-xs text-indigo-600 hover:underline">
-                    🔍 Xem biên lai Payment Zone
+                    🔍 Xem biên lai Payment Zone (payment_db)
                   </button>
                   <div id="receipt-${o.id}" class="hidden text-[11px] font-mono bg-slate-50 p-1.5 rounded border text-slate-600"></div>
                 </div>`
@@ -560,7 +455,6 @@ document.getElementById("searchBox").addEventListener("keydown", (e) => {
 // Khởi tạo
 updateAuthUI();
 loadProducts();
-loadCoupons();
 </script>
 </body>
 </html>

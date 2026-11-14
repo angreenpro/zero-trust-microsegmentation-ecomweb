@@ -82,7 +82,7 @@ services:
       DB_PORT: "3306"
       DB_USER: payment_user
       DB_PASSWORD: Payment#Lab2026
-      DB_NAME: ecommerce
+      DB_NAME: payment_db
       JWT_SECRET: zta-lab-super-secret-change-me
       INTERNAL_SERVICE_KEY: zta-internal-order-to-payment-key-2026
     networks:
@@ -103,7 +103,7 @@ services:
       DB_PORT: "3306"
       DB_USER: order_user
       DB_PASSWORD: Order#Lab2026
-      DB_NAME: ecommerce
+      DB_NAME: order_db
       JWT_SECRET: zta-lab-super-secret-change-me
       PAYMENT_SERVICE_URL: http://payment-service:8004
       INTERNAL_SERVICE_KEY: zta-internal-order-to-payment-key-2026

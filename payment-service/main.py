@@ -1,14 +1,16 @@
 """
 payment-service (Cổng 8004) - Zone 5: Deep Internal Payment / PCI-DSS Zone
+- Kết nối tới database riêng `payment_db` (chứa bảng `user_wallets` và `payments`).
 - Cô lập hoàn toàn khỏi cổng biên (nginx-gateway), catalog-service và auth-service.
 - Chỉ nhận kết nối Đông-Tây (East-West) duy nhất từ order-service qua mạng order_payment_net.
 - Áp dụng Xác thực Kép (Dual Zero-Trust Verification):
     1. Định danh dịch vụ gọi (Header X-Service-Key) chỉ order-service nắm giữ.
     2. Định danh người dùng cuối (Header Authorization: Bearer <JWT>).
-- Dùng tài khoản MySQL payment_user (Least Privilege):
-    + SELECT, INSERT trên bảng payments.
-    + SELECT (id, user_id, total_price, status) và chỉ được UPDATE (status) trên bảng orders.
-    + Hoàn toàn không đọc được bảng users hay products, không sửa được cột total_price.
+- Dùng tài khoản MySQL payment_user (Least Privilege & Column-Level Privilege):
+    + SELECT, INSERT trên bảng `payment_db.payments`.
+    + SELECT trên bảng `payment_db.user_wallets` và CHỈ được UPDATE (balance) (không sửa được credit_limit hay status).
+    + SELECT (id, user_id, total_price, status) và CHỈ được UPDATE (status) trên bảng `order_db.orders`.
+    + Hoàn toàn không đọc được `ecommerce.users`, `ecommerce.products`, hay `order_db.order_items`.
 """
 import os
 import time
@@ -26,7 +28,7 @@ DB_CONFIG = {
     "port": int(os.getenv("DB_PORT", "3306")),
     "user": os.getenv("DB_USER", "payment_user"),
     "password": os.getenv("DB_PASSWORD", "Payment#Lab2026"),
-    "database": os.getenv("DB_NAME", "ecommerce"),
+    "database": os.getenv("DB_NAME", "payment_db"),
     "charset": "utf8mb4",
     "use_unicode": True,
 }
@@ -70,26 +72,63 @@ def verify_dual_identity(
     return payload
 
 
-def mask_card(card_number: Optional[str], method: str) -> str:
+def mask_card(card_number: Optional[str], method: str, default_masked: str = "****-****-****-4242") -> str:
     if method == "cod":
         return "COD-CASH"
     if method == "vietqr":
         return "VIETQR-NAPAS"
-    digits = "".join(ch for ch in (card_number or "4111222233334242") if ch.isdigit())
-    last4 = digits[-4:] if len(digits) >= 4 else "4242"
-    return f"****-****-****-{last4}"
+    if card_number:
+        digits = "".join(ch for ch in card_number if ch.isdigit())
+        if len(digits) >= 4:
+            return f"****-****-****-{digits[-4:]}"
+    return default_masked
 
 
 class ChargeRequest(BaseModel):
     order_id: int
     amount: float
     payment_method: str = "credit_card"
-    card_number: Optional[str] = "4111222233334242"
+    card_number: Optional[str] = None
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "payment-service", "zone": "pci-dss-deep-internal"}
+    return {
+        "status": "ok",
+        "service": "payment-service",
+        "database": DB_CONFIG["database"],
+        "zone": "pci-dss-deep-internal",
+    }
+
+
+@app.get("/api/payments/wallet")
+def get_my_wallet(
+    authorization: Optional[str] = Header(None),
+    x_service_key: Optional[str] = Header(None),
+):
+    payload = verify_dual_identity(authorization, x_service_key)
+    user_id = payload["user_id"]
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            """
+            SELECT user_id, balance, credit_limit, card_holder, card_masked, bank_name, status, updated_at
+            FROM user_wallets
+            WHERE user_id = %s
+            """,
+            (user_id,),
+        )
+        wallet = cursor.fetchone()
+        if not wallet:
+            raise HTTPException(status_code=404, detail="Không tìm thấy ví thanh toán của người dùng")
+        wallet["balance"] = float(wallet["balance"])
+        wallet["credit_limit"] = float(wallet["credit_limit"])
+        return {"wallet": wallet}
+    finally:
+        cursor.close()
+        conn.close()
 
 
 @app.post("/api/payments/charge")
@@ -102,16 +141,15 @@ def charge_order(
     user_id = payload["user_id"]
 
     method = req.payment_method if req.payment_method in ("credit_card", "vietqr", "cod") else "credit_card"
-    card_masked = mask_card(req.card_number, method)
 
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     try:
         conn.start_transaction()
 
-        # Chỉ đọc các cột mà payment_user được cấp quyền trên bảng orders
+        # 1. Khóa dòng đơn hàng trên order_db.orders (chỉ đọc các cột payment_user được cấp quyền)
         cursor.execute(
-            "SELECT id, user_id, total_price, status FROM orders WHERE id = %s FOR UPDATE",
+            "SELECT id, user_id, total_price, status FROM order_db.orders WHERE id = %s FOR UPDATE",
             (req.order_id,),
         )
         order = cursor.fetchone()
@@ -134,20 +172,50 @@ def charge_order(
                 detail=f"Số tiền thanh toán ({req.amount}) không khớp với tổng đơn hàng ({expected_amount})",
             )
 
-        tx_ref = f"TX-{int(time.time())}-{req.order_id}-{uuid.uuid4().hex[:6].upper()}"
-
+        # 2. Khóa dòng Ví thanh toán của người dùng (payment_db.user_wallets) và kiểm tra số dư
         cursor.execute(
             """
-            INSERT INTO payments (order_id, user_id, amount, payment_method, card_masked, transaction_ref, status)
-            VALUES (%s, %s, %s, %s, %s, %s, 'success')
+            SELECT id, user_id, balance, credit_limit, card_holder, card_masked, bank_name, status
+            FROM user_wallets WHERE user_id = %s FOR UPDATE
             """,
-            (req.order_id, user_id, expected_amount, method, card_masked, tx_ref),
+            (user_id,),
+        )
+        wallet = cursor.fetchone()
+        if not wallet:
+            raise HTTPException(status_code=404, detail="Tài khoản người dùng chưa có ví thanh toán")
+        if wallet["status"] != "active":
+            raise HTTPException(status_code=403, detail="Ví thanh toán của bạn đang bị khóa")
+
+        balance_before = float(wallet["balance"])
+        if balance_before < expected_amount:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Số dư ví thanh toán không đủ (Hiện có: {balance_before:,.0f} đ, Cần: {expected_amount:,.0f} đ)",
+            )
+
+        # 3. Trừ số dư ví (payment_user được cấp quyền UPDATE(balance) trên payment_db.user_wallets)
+        cursor.execute(
+            "UPDATE user_wallets SET balance = balance - %s WHERE user_id = %s",
+            (expected_amount, user_id),
+        )
+        balance_after = round(balance_before - expected_amount, 2)
+
+        card_masked = mask_card(req.card_number, method, wallet["card_masked"])
+        tx_ref = f"TX-{int(time.time())}-{req.order_id}-{uuid.uuid4().hex[:6].upper()}"
+
+        # 4. Lưu lịch sử giao dịch vào bảng payment_db.payments
+        cursor.execute(
+            """
+            INSERT INTO payments (order_id, user_id, amount, balance_after, payment_method, card_masked, transaction_ref, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'success')
+            """,
+            (req.order_id, user_id, expected_amount, balance_after, method, card_masked, tx_ref),
         )
         payment_id = cursor.lastrowid
 
-        # payment_user chỉ có quyền UPDATE(status) trên bảng orders
+        # 5. Cập nhật trạng thái đơn hàng (payment_user chỉ có quyền UPDATE(status) trên order_db.orders)
         cursor.execute(
-            "UPDATE orders SET status = 'paid' WHERE id = %s",
+            "UPDATE order_db.orders SET status = 'paid' WHERE id = %s",
             (req.order_id,),
         )
 
@@ -156,6 +224,10 @@ def charge_order(
             "payment_id": payment_id,
             "order_id": req.order_id,
             "amount": expected_amount,
+            "balance_before": balance_before,
+            "balance_after": balance_after,
+            "card_holder": wallet["card_holder"],
+            "bank_name": wallet["bank_name"],
             "payment_method": method,
             "card_masked": card_masked,
             "transaction_ref": tx_ref,
@@ -186,7 +258,7 @@ def get_payment_by_order(
     try:
         cursor.execute(
             """
-            SELECT id, order_id, user_id, amount, payment_method, card_masked, transaction_ref, status, created_at
+            SELECT id, order_id, user_id, amount, balance_after, payment_method, card_masked, transaction_ref, status, created_at
             FROM payments
             WHERE order_id = %s AND user_id = %s
             ORDER BY id DESC LIMIT 1
@@ -200,4 +272,3 @@ def get_payment_by_order(
     finally:
         cursor.close()
         conn.close()
-
