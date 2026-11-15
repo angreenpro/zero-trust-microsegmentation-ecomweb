@@ -137,6 +137,17 @@ function updateAuthUI() {
   }
 }
 
+function handleExpiredSession(reason) {
+  localStorage.removeItem("jwt_token");
+  localStorage.removeItem("username");
+  localStorage.removeItem("role");
+  updateAuthUI();
+  const errBox = document.getElementById("loginError");
+  if (errBox) {
+    errBox.textContent = reason || "Phiên đăng nhập (JWT) đã hết hạn, vui lòng đăng nhập lại.";
+  }
+}
+
 async function loadWallet() {
   const token = getToken();
   const box = document.getElementById("walletBox");
@@ -145,7 +156,14 @@ async function loadWallet() {
     const res = await fetch("/api/orders/wallet", {
       headers: { Authorization: "Bearer " + token },
     });
-    if (!res.ok) throw new Error("Không tải được ví");
+    if (res.status === 401) {
+      handleExpiredSession("JWT hết hạn, vui lòng đăng nhập lại để xem Ví.");
+      return;
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
     const data = await res.json();
     const w = data.wallet;
     if (!w) return;
@@ -160,8 +178,8 @@ async function loadWallet() {
         <span class="font-bold text-sm text-emerald-400">${money(w.balance)}</span>
       </div>
     `;
-  } catch (_) {
-    box.innerHTML = '<p class="text-red-300">Không kết nối được Ví Payment Zone</p>';
+  } catch (err) {
+    box.innerHTML = `<p class="text-red-300">Không kết nối được Ví Payment Zone (${err.message})</p>`;
   }
 }
 
@@ -354,6 +372,10 @@ document.getElementById("checkoutBtn").addEventListener("click", async () => {
         card_number: cardNumber,
       }),
     });
+    if (res.status === 401) {
+      handleExpiredSession("JWT hết hạn, vui lòng đăng nhập lại.");
+      throw new Error("Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.");
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || "Đặt hàng thất bại");
@@ -376,6 +398,8 @@ document.getElementById("checkoutBtn").addEventListener("click", async () => {
   } catch (err) {
     msg.className = "text-sm mt-2 text-red-600";
     msg.textContent = err.message;
+    loadProducts();
+    loadWallet();
   }
 });
 
@@ -397,6 +421,11 @@ document.getElementById("myOrdersBtn").addEventListener("click", async () => {
     const res = await fetch("/api/orders/my-orders", {
       headers: { Authorization: "Bearer " + token },
     });
+    if (res.status === 401) {
+      handleExpiredSession("JWT hết hạn, vui lòng đăng nhập lại.");
+      box.classList.add("hidden");
+      return;
+    }
     if (!res.ok) throw new Error("Không lấy được lịch sử đơn hàng");
     const data = await res.json();
     if (!data.orders || data.orders.length === 0) {

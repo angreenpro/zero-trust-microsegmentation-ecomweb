@@ -86,6 +86,33 @@ def call_payment_service(path: str, method: str, authorization: str, body: Optio
         raise HTTPException(status_code=502, detail=f"Không thể kết nối tới payment-service: {e}")
 
 
+def compensate_failed_order(order_id: int, checked_items: list) -> None:
+    """
+    Giao dịch Bù trừ (Saga Compensating Transaction):
+    Khi payment-service từ chối thanh toán hoặc mất kết nối, tự động hoàn trả lại
+    số lượng tồn kho (ecommerce.products.stock) và đổi trạng thái đơn sang 'cancelled'.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        conn.start_transaction()
+        for product_id, quantity, _ in checked_items:
+            cursor.execute(
+                "UPDATE ecommerce.products SET stock = stock + %s WHERE id = %s",
+                (quantity, product_id),
+            )
+        cursor.execute(
+            "UPDATE orders SET status = 'cancelled' WHERE id = %s AND status = 'pending'",
+            (order_id,),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        cursor.close()
+        conn.close()
+
+
 class OrderItemIn(BaseModel):
     product_id: int
     quantity: int
@@ -166,17 +193,25 @@ def create_order(order: OrderIn, authorization: Optional[str] = Header(None)):
         conn.close()
 
     # Bước 2: Gọi Đông-Tây sang payment-service qua mạng cô lập order_payment_net
-    payment_info = call_payment_service(
-        path="/api/payments/charge",
-        method="POST",
-        authorization=authorization,
-        body={
-            "order_id": order_id,
-            "amount": total_price,
-            "payment_method": order.payment_method,
-            "card_number": order.card_number,
-        },
-    )
+    # Nếu thanh toán bị từ chối (VD: Ví không đủ số dư), kích hoạt Saga Rollback hoàn lại kho
+    try:
+        payment_info = call_payment_service(
+            path="/api/payments/charge",
+            method="POST",
+            authorization=authorization,
+            body={
+                "order_id": order_id,
+                "amount": total_price,
+                "payment_method": order.payment_method,
+                "card_number": order.card_number,
+            },
+        )
+    except HTTPException as exc:
+        compensate_failed_order(order_id, checked_items)
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=f"{exc.detail} (Đã tự động hoàn lại tồn kho và hủy đơn #{order_id})",
+        )
 
     return {
         "order_id": order_id,
