@@ -12,7 +12,7 @@
 
 ---
 
-### Bước 1: Khởi động cụm Container bằng Docker Compose
+### Khởi động cụm Container bằng Docker Compose
 
 1. Mở ứng dụng **Docker Desktop** và đợi trạng thái góc dưới bên trái báo **Engine running** (màu xanh).
 2. Mở Terminal (PowerShell hoặc CMD) tại thư mục gốc của dự án và chạy lệnh:
@@ -35,7 +35,6 @@ docker ps
    - **Tài khoản quản trị**: `admin` / `Admin@123`
 
 ---
-
 
 ### Các lệnh Quản lý & Khắc phục sự cố thường gặp
 
